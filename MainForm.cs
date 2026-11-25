@@ -770,9 +770,6 @@ public sealed class MainForm : Form
     {
         base.OnLoad(e);
 
-        _itemList.ItemCheck += (_, e2) =>
-            BeginInvoke(() => ApplyCheckedList(_itemList));
-
         _interval.ValueChanged += (_, _) =>
         {
             _cfg.IntervalMs = (int)_interval.Value;
@@ -856,10 +853,20 @@ public sealed class MainForm : Form
             }
         }
 
-        // 初始勾选状态
-        for (int i = 0; i < ItemDefs.Length; i++)
-            if (_cfg.Items.HasFlag(ItemDefs[i].Item))
+        // 初始勾选状态：必须按**标签**匹配，不能用 ItemDefs 的索引。
+        // 上面可能已把列表重排成用户自定义顺序，此时列表第 i 项与 ItemDefs[i] 已经不是同一项，
+        // 按索引勾就会勾错（表现为"勾选记不住 / 每次启动都变了"）。
+        for (int i = 0; i < _itemList.Items.Count; i++)
+        {
+            if (_itemList.Items[i] is not string label) continue;
+            var def = ItemDefs.FirstOrDefault(d => d.Label == label);
+            if (!string.IsNullOrEmpty(def.Label) && _cfg.Items.HasFlag(def.Item))
                 _itemList.SetItemChecked(i, true);
+        }
+
+        // 初始状态摆好之后再挂"改动即保存"的事件：
+        // 否则上面每次 SetItemChecked 都会排队一次 ApplyCheckedList + 写盘，而且中途状态还不完整。
+        _itemList.ItemCheck += (_, _) => BeginInvoke(() => ApplyCheckedList(_itemList));
 
         ApplyCheckedList(_itemList);   // 初始化后落一次盘（勾选 + 顺序）
 
