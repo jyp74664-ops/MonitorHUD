@@ -18,7 +18,12 @@
 
 ## 下载与运行
 
-从 [Releases](https://github.com/jyp74664-ops/MonitorHUD/releases) 下载 `MonitorHUD.exe`，直接双击运行。
+exe 直接放在仓库里，任选一种方式取：
+
+- **直接下载**：点开 [`dist/MonitorHUD.exe`](dist/MonitorHUD.exe)，点右上角「Download raw file」。
+- **Releases**：后续发版会同步放到 [Releases](https://github.com/jyp74664-ops/MonitorHUD/releases)。
+
+程序为单文件发布，双击即可运行，但**需要本机已安装 .NET 10 桌面运行时**（.NET Desktop Runtime）。未安装时系统会提示缺少运行时，不会静默失败。
 
 - **显示 CPU / 主板温度需要以管理员身份运行**：程序跑起来后，右键托盘图标 → 「以管理员身份重新启动」，在 UAC 弹窗点「是」即可，不用重新找 exe。温度来自 WMI 热区（`MSAcpi_ThermalZoneTemperature`），非管理员权限读不到；UAC 点「否」则维持当前实例继续运行，不会把程序关掉。
 - GPU 占用 / 显存 / GPU 温度来自 `nvidia-smi`，需要 NVIDIA 驱动；无 NVIDIA 显卡时这几项留空，其余功能正常。
