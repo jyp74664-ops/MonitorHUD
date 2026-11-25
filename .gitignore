@@ -1,0 +1,15 @@
+# 构建产物
+bin/
+obj/
+publish/
+*.pdb
+
+# 临时探测项目（非主程序）
+probe/
+
+# 备份文件
+*.bak-*
+
+# 本地配置/缓存
+*.tmp
+config.json

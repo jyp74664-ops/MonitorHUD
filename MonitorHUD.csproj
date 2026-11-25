@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>MonitorHUD</AssemblyName>
+    <RootNamespace>MonitorHUD</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>1.0.0</Version>
+    <Product>MonitorHUD</Product>
+    <Description>桌面顶部硬件监控悬浮条 + 主面板</Description>
+  </PropertyGroup>
+
+  <!-- 图标嵌入程序集：单文件发布时托盘/窗口图标不能依赖外部 ico 文件 -->
+  <ItemGroup>
+    <EmbeddedResource Include="app.ico" />
+  </ItemGroup>
+
+  <!-- probe 是独立的温度传感器探测项目，不能并进主程序的编译 -->
+  <ItemGroup>
+    <Compile Remove="probe/**/*.cs" />
+    <None Remove="probe/**" />
+    <EmbeddedResource Remove="probe/**" />
+  </ItemGroup>
+
+</Project>
