@@ -531,10 +531,21 @@ public sealed class MainForm : Form
 
     private ContextMenuStrip BuildTrayMenu()
     {
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip { ShowItemToolTips = true };
         menu.Items.Add("打开主面板", null, (_, _) => ShowFromTray());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("重新启动", null, (_, _) => RestartApp());
+        menu.Items.Add("重新启动", null, (_, _) => RestartApp(elevate: false));
+
+        // 已提权时不再给同一个入口：再点一次只会弹一次无意义的 UAC 往返
+        var adminItem = menu.Items.Add(
+            MonitorServiceAdmin ? "已以管理员身份运行" : "以管理员身份重新启动",
+            null,
+            (_, _) => RestartApp(elevate: true));
+        adminItem.Enabled = !MonitorServiceAdmin;
+        adminItem.ToolTipText = MonitorServiceAdmin
+            ? "当前实例已具备管理员权限，CPU / 主板温度可读"
+            : "重启并请求管理员权限，用于读取 CPU / 主板温度（会弹 UAC 确认）";
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => { _exiting = true; Application.Exit(); });
         return menu;
@@ -544,8 +555,9 @@ public sealed class MainForm : Form
     /// 托盘「重新启动」：先起新进程（把旧 PID 传过去），再关掉自己。
     /// 新进程在 Program.Main 里等旧 PID 退出后才抢单实例 Mutex —— 否则它会把自己
     /// 判成"重复实例"，唤醒旧进程后自己退出，表面看就是程序被关掉了。
+    /// elevate=true 时给启动信息加 runas 谓词触发 UAC，成功后才退出自己。
     /// </summary>
-    private void RestartApp()
+    private void RestartApp(bool elevate)
     {
         try
         {
@@ -557,16 +569,26 @@ public sealed class MainForm : Form
                 return;
             }
 
-            Process.Start(new ProcessStartInfo
+            var psi = new ProcessStartInfo
             {
                 FileName = exe,
                 Arguments = $"--restart-after {Environment.ProcessId}",
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
-            });
+            };
+            if (elevate) psi.Verb = "runas";   // 交由 ShellExecute 弹 UAC
+
+            // 提权被拒绝时这里会抛异常，此时自己绝不能退出，否则就"点了没反应还把自己关了"
+            Process.Start(psi);
 
             _exiting = true;      // 跳过"最小化到托盘"，让窗口真正关掉
             Application.Exit();
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+        {
+            // 用户在 UAC 弹窗点了「否」
+            MessageBox.Show("已取消管理员授权，程序继续以当前权限运行。\n（此时读不到 CPU / 主板温度）",
+                "MonitorHUD", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -574,6 +596,9 @@ public sealed class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
+
+    /// <summary>ShellExecuteEx 在 UAC 被拒绝时返回的错误码。</summary>
+    private const int ErrorCancelled = 1223;
 
     private bool _exiting;
 
