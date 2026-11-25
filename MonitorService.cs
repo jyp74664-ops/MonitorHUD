@@ -233,6 +233,53 @@ public sealed class MonitorService : IDisposable
         }
     }
 
+    // ------------------------------------------------------------ 子进程
+
+    /// <summary>
+    /// 跑一个外部命令并取回 stdout，带真正生效的超时。
+    ///
+    /// 两条铁律（原实现踩过的坑）：
+    /// 1) 只要 Redirect 了 stdout / stderr，就**必须都读**。只读 stdout 时，子进程写
+    ///    stderr 管道写满（约 4KB）就会阻塞在写，父进程永远等不到 EOF —— 死锁，
+    ///    采样线程永久冻结，表现为界面不崩但数字不动。
+    /// 2) 超时必须在读之前生效。同步 ReadToEnd() 会一直阻塞到 EOF，写在它后面的
+    ///    WaitForExit(timeout) 根本轮不到执行，等于没有超时。
+    ///
+    /// 这里改成异步读 + Task.WaitAll(超时)，超时直接杀进程树，保证调用方一定拿回控制权。
+    /// </summary>
+    private static string? RunAndCapture(string fileName, string arguments, int timeoutMs)
+    {
+        Process? p = null;
+        try
+        {
+            p = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            });
+            if (p is null) return null;
+
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();   // 不读 stderr 就是等着死锁
+
+            if (!Task.WaitAll([outTask, errTask], timeoutMs))
+            {
+                // 超时：连子进程树一起杀掉，避免残留 nvidia-smi / powershell 僵尸进程
+                try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
+                return null;
+            }
+
+            try { p.WaitForExit(1000); } catch { /* 已退出 */ }   // 句柄释放后再 Dispose
+            return outTask.Result;
+        }
+        catch { return null; }
+        finally { p?.Dispose(); }
+    }
+
     // ------------------------------------------------------------ 显卡查询
 
     private static class NvSmi
@@ -249,28 +296,16 @@ public sealed class MonitorService : IDisposable
         {
             foreach (var exe in Candidates)
             {
-                try
-                {
-                    using var p = Process.Start(new ProcessStartInfo
-                    {
-                        FileName = exe,
-                        Arguments = "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true,
-                    });
-                    if (p is null) continue;
-                    var outp = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit(3000);
-                    var line = outp.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                    if (line is null) continue;
-                    var parts = line.Split(',');
-                    if (parts.Length < 4) continue;
-                    return (
-                        ParseD(parts[0]), ParseD(parts[1]), ParseD(parts[2]), ParseD(parts[3]));
-                }
-                catch { }
+                var outp = RunAndCapture(exe,
+                    "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits",
+                    timeoutMs: 3000);
+                if (outp is null) continue;
+
+                var line = outp.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                if (line is null) continue;
+                var parts = line.Split(',');
+                if (parts.Length < 4) continue;
+                return (ParseD(parts[0]), ParseD(parts[1]), ParseD(parts[2]), ParseD(parts[3]));
             }
             return null;
         }
@@ -288,33 +323,23 @@ public sealed class MonitorService : IDisposable
         public static List<double> ReadZones()
         {
             var result = new List<double>();
-            try
+            var outp = RunAndCapture("powershell.exe",
+                "-NoProfile -Command " +
+                "\"Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature " +
+                "-EA Stop | ForEach-Object { '{0}={1}' -f $_.InstanceName, $_.CurrentTemperature }\"",
+                timeoutMs: 5000);
+            if (outp is null) return result;
+
+            foreach (var line in outp.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
-                using var p = Process.Start(new ProcessStartInfo
+                var idx = line.LastIndexOf('=');
+                if (idx <= 0) continue;
+                if (double.TryParse(line[(idx + 1)..].Trim(), out var k10) && k10 > 0)
                 {
-                    FileName = "powershell.exe",
-                    Arguments = "-NoProfile -Command " +
-                        "\"Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature " +
-                        "-EA Stop | ForEach-Object { '{0}={1}' -f $_.InstanceName, $_.CurrentTemperature }\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                });
-                var outp = p!.StandardOutput.ReadToEnd();
-                p.WaitForExit(5000);
-                foreach (var line in outp.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var idx = line.LastIndexOf('=');
-                    if (idx <= 0) continue;
-                    if (double.TryParse(line[(idx + 1)..].Trim(), out var k10) && k10 > 0)
-                    {
-                        var c = k10 / 10.0 - 273.15;
-                        if (c is > 0 and < 120) result.Add(Math.Round(c, 0));
-                    }
+                    var c = k10 / 10.0 - 273.15;
+                    if (c is > 0 and < 120) result.Add(Math.Round(c, 0));
                 }
             }
-            catch { }
             result.Sort((a, b) => b.CompareTo(a));
             return result;
         }

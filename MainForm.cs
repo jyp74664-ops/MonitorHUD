@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Text.Json;
 
@@ -101,6 +102,8 @@ public sealed class MainForm : Form
     private ComboBox? _styleCombo;
     private readonly CheckBox _clickThrough;
     private readonly CheckBox _minToTray;
+    private CheckBox? _autoStart;          // 开机自启（状态以注册表为准）
+    private bool _autoStartSyncing;        // 程序化改勾选时抑制事件递归
     private readonly Label _adminHint;
 
     public MainForm()
@@ -481,8 +484,17 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 2, 0, 2),
             Checked = _cfg.MinimizeToTray,
         };
+        // 开机自启状态直接读注册表：用户可能在别处删过启动项，不能只信 config
+        _autoStart = new CheckBox
+        {
+            Text = "开机自动启动",
+            AutoSize = true,
+            Margin = new Padding(0, 2, 0, 2),
+            Checked = AutoStart.IsEnabled,
+        };
         checkFlow.Controls.Add(clickThrough);
         checkFlow.Controls.Add(minToTray);
+        checkFlow.Controls.Add(_autoStart);
 
         var hint = new Label
         {
@@ -522,8 +534,45 @@ public sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开主面板", null, (_, _) => ShowFromTray());
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("重新启动", null, (_, _) => RestartApp());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => { _exiting = true; Application.Exit(); });
         return menu;
+    }
+
+    /// <summary>
+    /// 托盘「重新启动」：先起新进程（把旧 PID 传过去），再关掉自己。
+    /// 新进程在 Program.Main 里等旧 PID 退出后才抢单实例 Mutex —— 否则它会把自己
+    /// 判成"重复实例"，唤醒旧进程后自己退出，表面看就是程序被关掉了。
+    /// </summary>
+    private void RestartApp()
+    {
+        try
+        {
+            var exe = AutoStart.ExePath;
+            if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+            {
+                MessageBox.Show("找不到程序自身路径，无法自动重启。请手动退出后重新打开。",
+                    "MonitorHUD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = $"--restart-after {Environment.ProcessId}",
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.CurrentDirectory,
+            });
+
+            _exiting = true;      // 跳过"最小化到托盘"，让窗口真正关掉
+            Application.Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"重新启动失败：{ex.Message}", "MonitorHUD",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private bool _exiting;
@@ -774,6 +823,22 @@ public sealed class MainForm : Form
             _cfg.MinimizeToTray = _minToTray.Checked;
             _cfg.Save();
         };
+
+        if (_autoStart is { } autoStart)
+        {
+            autoStart.CheckedChanged += (_, _) =>
+            {
+                if (_autoStartSyncing) return;
+                if (AutoStart.Set(autoStart.Checked, out var err)) return;
+
+                // 写注册表失败就把勾选拨回去，不能让界面显示与实际行为不一致
+                _autoStartSyncing = true;
+                autoStart.Checked = !autoStart.Checked;
+                _autoStartSyncing = false;
+                MessageBox.Show($"设置开机启动失败：{err}", "MonitorHUD",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            };
+        }
 
         // 按保存的顺序重排勾选列表
         if (_cfg.Order.Count > 0)
