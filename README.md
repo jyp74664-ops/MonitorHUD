@@ -20,8 +20,8 @@
 
 exe 直接放在仓库里，任选一种方式取：
 
-- **直接下载**：点开 [`dist/MonitorHUD.exe`](dist/MonitorHUD.exe)，点右上角「Download raw file」。
-- **Releases**：后续发版会同步放到 [Releases](https://github.com/jyp74664-ops/MonitorHUD/releases)。
+- **直接下载（推荐）**：点开 [`dist/MonitorHUD.exe`](dist/MonitorHUD.exe)，点右上角「Download raw file」。这份与当前源码同步，是最新版。
+- **Releases**：历史版本见 [Releases](https://github.com/jyp74664-ops/MonitorHUD/releases)。
 
 程序为单文件发布，双击即可运行，但**需要本机已安装 .NET 10 桌面运行时**（.NET Desktop Runtime）。未安装时系统会提示缺少运行时，不会静默失败。
 
